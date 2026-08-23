@@ -9,7 +9,7 @@ setup(
     url="https://github.com/anwai98/hemogrid",
     packages=find_packages(include=["hemogrid", "hemogrid.*"]),
     python_requires=">=3.11",
-    install_requires=["numpy", "scipy", "scikit-image", "tifffile", "pillow", "rich", "napari[all]"],
+    install_requires=["numpy", "scipy", "scikit-image", "tifffile", "pillow", "rich", "napari"],
     entry_points={"console_scripts": ["hemogrid=hemogrid.cli:main"]},
     classifiers=[
         "Intended Audience :: Science/Research",

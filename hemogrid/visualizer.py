@@ -9,7 +9,9 @@ SINGLE_COLOR = (0, 165, 255)
 
 BOX_COLOR = (60, 255, 80)
 
-POINT_COLOR = (255, 45, 85)
+POINT_RGB = (255, 45, 85)
+
+POINT_HEX = "#ff2d55"
 
 
 def draw_overlay(image, v_lines, h_lines, boxes):
@@ -43,7 +45,7 @@ def check_panel(crop, points, zoom=6):
     for y, x in points:
         center_y, center_x = (y + 0.5) * zoom, (x + 0.5) * zoom
         box = [center_x - radius, center_y - radius, center_x + radius, center_y + radius]
-        draw.ellipse(box, outline=POINT_COLOR, width=max(1, zoom // 3))
+        draw.ellipse(box, outline=POINT_RGB, width=max(1, zoom // 3))
     return canvas
 
 
@@ -52,7 +54,7 @@ def add_crop_viewer(napari, grid, cells, size):
     viewer = napari.Viewer(title=f"cells per square (mean {cells.counts.mean():.1f})")
     viewer.add_image(grid.crops, name="squares", contrast_limits=tuple(np.percentile(grid.crops, [1, 99])))
     viewer.add_labels(cells.label_stack, name="segmented cells", opacity=0.4, visible=False)
-    viewer.add_points(cells.points_stacked, name="cells", face_color=POINT_COLOR, size=size, symbol="ring")
+    viewer.add_points(cells.points_stacked, name="cells", face_color=POINT_HEX, size=size, symbol="ring")
     viewer.dims.set_point(0, 0)
     viewer.reset_view()
 
@@ -62,7 +64,7 @@ def add_raw_viewer(napari, grid, cells, size):
     viewer = napari.Viewer(title=f"raw input with {len(cells.points_raw)} counted cells")
     viewer.add_image(grid.raw, name="raw input", contrast_limits=tuple(np.percentile(grid.raw, [1, 99])))
     viewer.add_labels(grid.labels_raw, name="counted squares", opacity=0.25)
-    viewer.add_points(cells.points_raw, name="cells", face_color=POINT_COLOR, size=size, symbol="ring")
+    viewer.add_points(cells.points_raw, name="cells", face_color=POINT_HEX, size=size, symbol="ring")
     viewer.reset_view()
 
 
