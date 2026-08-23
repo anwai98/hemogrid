@@ -216,3 +216,21 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# pipeline output
+grid_output/
+groups_*/
+*.npz
+*.tif
+*.tiff
+cell_counts.csv
+summary.json
+grid.json
+overlay.png
+crops_montage.png
+detections_zoom.png
+
+# editor swap files
+*.swp
+*.swo
+*~
