@@ -226,6 +226,8 @@ def measure_line_width(signal, positions, half_window=8.0):
     mean = np.nanmean(stack, axis=0)
     mean = mean - np.nanmin(mean)
     above = offsets[mean >= 0.5 * np.nanmax(mean)]
+    if len(above) == 0:
+        return float(2 * half_window)
     return float(above[-1] - above[0])
 
 
@@ -252,10 +254,14 @@ def box_sides(boxes):
 
 
 def crop_squares(image, valid, centers, side):
-    """Fixed size squares around each center, keeping only those fully inside valid data."""
+    """Fixed size squares around each center, keeping only those fully inside valid data.
+
+    Also returns, for every kept crop, the index it had among the given centers, so a crop can
+    be traced back to its row and column in the model grid.
+    """
     half = side / 2.0
-    crops, boxes = [], []
-    for center_y, center_x in centers:
+    crops, boxes, model_index = [], [], []
+    for index, (center_y, center_x) in enumerate(centers):
         y0 = int(round(center_y - half))
         x0 = int(round(center_x - half))
         y1, x1 = y0 + side, x0 + side
@@ -265,9 +271,11 @@ def crop_squares(image, valid, centers, side):
             continue
         crops.append(image[y0:y1, x0:x1])
         boxes.append((y0, x0, y1, x1))
+        model_index.append(index)
     if not crops:
-        return np.zeros((0, side, side), dtype=image.dtype), np.zeros((0, 4), dtype=int)
-    return np.stack(crops), np.array(boxes)
+        return (np.zeros((0, side, side), dtype=image.dtype), np.zeros((0, 4), dtype=int),
+                np.zeros((0,), dtype=int))
+    return np.stack(crops), np.array(boxes), np.array(model_index, dtype=int)
 
 
 def label_crops(shape, boxes):

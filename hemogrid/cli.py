@@ -49,6 +49,17 @@ def parse_args():
     cell.add_argument("--line-window", type=int, default=41, help="median window along a grid line")
     cell.add_argument("--keep-lines", action="store_true", help="skip the grid ridge subtraction")
     cell.add_argument("--depth-um", type=float, default=100.0, help="chamber depth used for the concentration")
+    cell.add_argument(
+        "--sample-type", choices=pipeline.SAMPLE_TYPES, default=None,
+        help="wbc: one total for the whole square; rbc: the four corners and the center square",
+    )
+    cell.add_argument(
+        "--wbc-margin-px", type=int, default=40,
+        help="pixels trimmed off every edge of the square before a wbc count",
+    )
+    cell.add_argument(
+        "--dark-cells", action="store_true", help="cells are darker than the background, not brighter",
+    )
     return parser.parse_args()
 
 
@@ -64,6 +75,7 @@ def params_from_args(args):
         shape_score=args.shape_score, template_radius=args.template_radius,
         line_halfwidth=args.line_halfwidth, line_window=args.line_window,
         strip_lines=not args.keep_lines, depth_um=args.depth_um, workers=args.workers,
+        sample_type=args.sample_type, wbc_margin_px=args.wbc_margin_px, dark_cells=args.dark_cells,
     )
     return grid, cells
 
@@ -85,19 +97,72 @@ def count_table(grid, cells):
     return table
 
 
-def report_counts(grid, cells):
-    """The headline number, then the spread and where the detections came from."""
-    if cells.concentration is None:
+def rbc_table(grid, cells, selected):
+    """The five RBC squares by row and column, their counts, and the average."""
+    table = Table(title="rbc squares", title_style="bold", header_style="bold cyan")
+    table.add_column("row", justify="right")
+    table.add_column("col", justify="right")
+    table.add_column("count", justify="right")
+    counts = []
+    for row, col, crop_index in selected:
+        count = cells.per_crop[crop_index]["count"]
+        counts.append(count)
+        table.add_row(f"{row}", f"{col}", f"{count}")
+    table.add_section()
+    table.add_row("", "avg", f"{np.mean(counts):.1f}" if counts else "-")
+    return table, np.array(counts, dtype=float)
+
+
+def report_wbc(grid, cells):
+    """One total for the whole margin trimmed square."""
+    console.print(f"\n[bold green]{len(cells.points)}[/] cells in the square")
+    if cells.wbc_concentration is None:
         console.print("[yellow]no pixel size in the tif tags, so no concentration[/]")
     else:
         console.print(
-            f"\n[bold green]{cells.concentration:,.0f}[/] cells per microlitre "
-            f"[dim](chamber depth {cells.params.depth_um:.0f} um)[/]"
+            f"[bold green]{cells.wbc_concentration:,.0f}[/] cells per microlitre "
+            f"[dim](chamber depth {cells.params.depth_um:.0f} um, margin {cells.params.wbc_margin_px} px)[/]"
         )
-    console.print(count_table(grid, cells))
+
+
+def report_rbc(grid, cells):
+    """The four corner and the center square, their counts and the average."""
+    positions = pipeline.corner_center_positions(grid.n_rows, grid.n_cols)
+    selected = pipeline.select_squares(grid, positions)
+    if len(selected) < len(positions):
+        console.print(
+            f"[yellow]warning:[/] only {len(selected)} of {len(positions)} rbc squares survived the crop"
+        )
+    table, counts = rbc_table(grid, cells, selected)
+    console.print(table)
+    if len(counts) and grid.pixel_um is not None:
+        concentration = util.concentration_per_ul(counts.mean(), grid.side, grid.pixel_um, cells.params.depth_um)
+        console.print(
+            f"[bold green]{concentration:,.0f}[/] cells per microlitre "
+            f"[dim](chamber depth {cells.params.depth_um:.0f} um, from the average of these squares)[/]"
+        )
+    return selected
+
+
+def report_counts(grid, cells):
+    """The headline number, then the spread and where the detections came from."""
+    if cells.params.sample_type == "wbc":
+        report_wbc(grid, cells)
+    elif cells.params.sample_type == "rbc":
+        report_rbc(grid, cells)
+    else:
+        if cells.concentration is None:
+            console.print("[yellow]no pixel size in the tif tags, so no concentration[/]")
+        else:
+            console.print(
+                f"\n[bold green]{cells.concentration:,.0f}[/] cells per microlitre "
+                f"[dim](chamber depth {cells.params.depth_um:.0f} um)[/]"
+            )
+        console.print(count_table(grid, cells))
+    n_line = len(cells.unassigned_points_raw) if cells.unassigned_points_raw is not None else 0
     console.print(
         f"[dim]{len(cells.points)} cells in the frame: {cells.n_amplitude} on amplitude, "
-        f"{cells.n_added} on the cell profile. squares of {grid.side} px, "
+        f"{cells.n_added} on the cell profile, {n_line} on a grid line. squares of {grid.side} px, "
         f"rotation {grid.angle:+.3f} deg[/]"
     )
 
@@ -144,7 +209,7 @@ def main():
     grid_params, cell_params = params_from_args(args)
     grid, cells, watch = process(path, grid_params, cell_params, args.verbose)
     report_counts(grid, cells)
-    if cells.overlap > 0.01:
+    if cells.params.sample_type != "wbc" and cells.overlap > 0.01:
         console.print(
             f"[yellow]warning:[/] {100 * cells.overlap:.1f}% of the counted area lies in two squares, "
             f"so the concentration is low by about that much; use --crop-mode inner for a density"
@@ -155,6 +220,16 @@ def main():
     if args.output_dir:
         out_dir = Path(args.output_dir)
         timing = {"stage_seconds": dict(watch.laps), "total_seconds": watch.total}
+        if cell_params.sample_type == "wbc":
+            timing["wbc_total"] = len(cells.points)
+            timing["wbc_concentration_per_ul"] = cells.wbc_concentration
+        elif cell_params.sample_type == "rbc":
+            positions = pipeline.corner_center_positions(grid.n_rows, grid.n_cols)
+            selected = pipeline.select_squares(grid, positions)
+            timing["rbc_squares"] = [
+                {"row": row, "col": col, "count": cells.per_crop[index]["count"]}
+                for row, col, index in selected
+            ]
         written = util.write_tables(out_dir, grid, cells, extra=timing)
         written += visualizer.save_pictures(out_dir, grid, cells)
         console.print(f"[dim]wrote {out_dir}/ " + ", ".join(written) + "[/]")

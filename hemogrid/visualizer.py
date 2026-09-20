@@ -60,11 +60,15 @@ def add_crop_viewer(napari, grid, cells, size):
 
 
 def add_raw_viewer(napari, grid, cells, size):
-    """Every counted cell back on the untouched input, next to the squares it was counted in."""
-    viewer = napari.Viewer(title=f"raw input with {len(cells.points_raw)} counted cells")
+    """Every counted cell back on the untouched input, in and out of a square alike."""
+    if cells.unassigned_points_raw is not None and len(cells.unassigned_points_raw):
+        all_points_raw = np.concatenate([cells.points_raw, cells.unassigned_points_raw])
+    else:
+        all_points_raw = cells.points_raw
+    viewer = napari.Viewer(title=f"raw input with {len(all_points_raw)} counted cells")
     viewer.add_image(grid.raw, name="raw input", contrast_limits=tuple(np.percentile(grid.raw, [1, 99])))
     viewer.add_labels(grid.labels_raw, name="counted squares", opacity=0.25)
-    viewer.add_points(cells.points_raw, name="cells", face_color=POINT_HEX, size=size, symbol="ring")
+    viewer.add_points(all_points_raw, name="cells", face_color=POINT_HEX, size=size, symbol="ring")
     viewer.reset_view()
 
 

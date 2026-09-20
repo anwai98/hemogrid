@@ -4,11 +4,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from scipy.ndimage import binary_erosion
+
 from . import util
 from . import cropper
 from . import detector
 
 PATTERN_CANDIDATES = (2, 3, 4)
+
+SAMPLE_TYPES = ("wbc", "rbc")
 
 
 @dataclass
@@ -38,6 +42,9 @@ class CellParams:
     strip_lines: bool = True
     depth_um: float = 100.0
     workers: int = None
+    sample_type: str = None
+    wbc_margin_px: int = 40
+    dark_cells: bool = False
 
 
 @dataclass
@@ -74,6 +81,9 @@ class Grid:
     labels_raw: np.ndarray
     pixel_um: float
     params: GridParams
+    n_rows: int
+    n_cols: int
+    model_index: np.ndarray
     source: str = ""
 
     @property
@@ -107,6 +117,9 @@ class Cells:
     n_template: int
     concentration: float
     params: CellParams
+    mask_area_px: int = 0
+    wbc_concentration: float = None
+    unassigned_points_raw: np.ndarray = None
 
 
 def fit_axis(deskewed, axis, name, workers=1):
@@ -166,15 +179,16 @@ def detect_grid(image, pixel_um=None, params=None, log=util.silent, watch=None, 
 
     v_triples = axes["vertical"].triples
     h_triples = axes["horizontal"].triples
+    n_cols, n_rows = len(v_triples) - 1, len(h_triples) - 1
     model_boxes = cropper.group_boxes(v_triples, h_triples, params.crop_mode)
     bounded_sides = cropper.box_sides(model_boxes)
     side = max(1, int(round(np.median(bounded_sides) + 2.0 * params.pad)))
     centers = cropper.box_centers(model_boxes)
-    crops, boxes = cropper.crop_squares(deskewed, valid, centers, side)
+    crops, boxes, model_index = cropper.crop_squares(deskewed, valid, centers, side)
     labels = cropper.label_crops(deskewed.shape, boxes)
     labels_raw = cropper.labels_to_raw(labels, affine, image.shape)
     log(
-        f"{len(v_triples) - 1} columns x {len(h_triples) - 1} rows = {len(model_boxes)} squares, "
+        f"{n_cols} columns x {n_rows} rows = {len(model_boxes)} squares, "
         f"crop mode {params.crop_mode}, side {side} px, kept {len(crops)} fully inside valid data"
     )
     watch.lap("crop the squares")
@@ -183,7 +197,7 @@ def detect_grid(image, pixel_um=None, params=None, log=util.silent, watch=None, 
         raw=image, deskewed=deskewed, valid=valid, angle=angle, affine=affine, axes=axes,
         model_boxes=model_boxes, bounded_sides=bounded_sides, centers=centers, boxes=boxes,
         side=side, crops=crops, labels=labels, labels_raw=labels_raw, pixel_um=pixel_um,
-        params=params, source=source,
+        params=params, n_rows=n_rows, n_cols=n_cols, model_index=model_index, source=source,
     )
 
 
@@ -194,6 +208,10 @@ def count_cells(grid, params=None, log=util.silent, watch=None):
     workers = util.worker_count(params.workers)
     deskewed = grid.deskewed.astype(np.float32)
     valid = grid.valid.astype(bool)
+    mask = valid
+    if params.sample_type == "wbc" and params.wbc_margin_px > 0:
+        mask = binary_erosion(valid, iterations=params.wbc_margin_px, border_value=0)
+        log(f"wbc margin {params.wbc_margin_px} px, {100 * mask.mean():.1f} percent of the frame kept")
 
     halfwidth = None
     if params.strip_lines:
@@ -217,9 +235,11 @@ def count_cells(grid, params=None, log=util.silent, watch=None):
     watch.lap("subtract grid ridges")
 
     response = detector.cell_response(flat, params.cell_sigma, params.background_sigma, workers)
-    noise = detector.noise_level(response, valid)
+    if params.dark_cells:
+        response = -response
+    noise = detector.noise_level(response, mask)
     threshold = params.threshold_sigma * noise
-    points = detector.detect_cells(response, valid, threshold, params.split_sigma * noise, workers)
+    points = detector.detect_cells(response, mask, threshold, params.split_sigma * noise, workers)
     n_amplitude = len(points)
     log(
         f"noise {noise:.2f} grey levels, threshold {threshold:.1f} at "
@@ -232,7 +252,7 @@ def count_cells(grid, params=None, log=util.silent, watch=None):
         template, n_template = detector.cell_template(flat, points, response, params.template_radius)
         score = detector.shape_score(flat, template, workers)
         points, n_added = detector.add_shaped_cells(
-            points, score, valid, params.shape_score, 3.0 * params.cell_sigma, workers
+            points, score, mask, params.shape_score, 3.0 * params.cell_sigma, workers
         )
         log(
             f"cell profile from the {n_template} brightest, {n_added} more cells with a profile "
@@ -240,7 +260,7 @@ def count_cells(grid, params=None, log=util.silent, watch=None):
         )
     watch.lap("detect on cell profile")
 
-    labels = detector.segment_cells(response, points, valid, threshold)
+    labels = detector.segment_cells(response, points, mask, threshold)
     areas = detector.seed_areas(labels, len(points))
     log(f"{len(points)} cells in the frame")
     watch.lap("segment")
@@ -263,14 +283,46 @@ def count_cells(grid, params=None, log=util.silent, watch=None):
     )
     watch.lap("assign to squares")
 
+    mask_area_px = int(mask.sum())
+    wbc_concentration = None
+    if params.sample_type == "wbc":
+        wbc_concentration = util.concentration_from_area_per_ul(
+            len(points), mask_area_px, grid.pixel_um, params.depth_um
+        )
+    unassigned_points_raw = util.points_to_raw(points[owner < 0], grid.affine)
+    log(f"{len(unassigned_points_raw)} of those sit on a grid line, outside every square")
+
     return Cells(
         points=points, owner=owner, labels=labels, label_stack=label_stack, local=local,
         points_stacked=stacked, points_deskewed=in_frame, per_crop=per_crop, counts=counts,
         points_raw=util.points_to_raw(in_frame, grid.affine), flat=flat, response=response,
         noise=noise, threshold=threshold, halfwidth=halfwidth, overlap=overlap,
         n_amplitude=n_amplitude, n_added=n_added, n_template=n_template,
-        concentration=concentration, params=params,
+        concentration=concentration, params=params, mask_area_px=mask_area_px,
+        wbc_concentration=wbc_concentration, unassigned_points_raw=unassigned_points_raw,
     )
+
+
+def corner_center_positions(n_rows, n_cols):
+    """Row, column of the four corners and the center of an r x c grid, the classic five RBC squares."""
+    rows = sorted({0, n_rows - 1})
+    cols = sorted({0, n_cols - 1})
+    positions = [(row, col) for row in rows for col in cols]
+    center = (n_rows // 2, n_cols // 2)
+    if center not in positions:
+        positions.append(center)
+    return positions
+
+
+def select_squares(grid, positions):
+    """Crop index of every requested (row, col) square that survived the crop, skipped if not."""
+    selected = []
+    for row, col in positions:
+        model_idx = row * grid.n_cols + col
+        hit = np.flatnonzero(grid.model_index == model_idx)
+        if len(hit):
+            selected.append((row, col, int(hit[0])))
+    return selected
 
 
 def run(path, grid_params=None, cell_params=None, log=util.silent, watch=None):

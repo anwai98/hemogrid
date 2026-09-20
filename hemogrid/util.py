@@ -104,12 +104,17 @@ def pixel_size_um(path):
     return micron_per_unit / per_unit
 
 
-def concentration_per_ul(count, side_px, pixel_um, depth_um):
-    """Cells per microlitre of chamber volume under the counted square."""
+def concentration_from_area_per_ul(count, area_px, pixel_um, depth_um):
+    """Cells per microlitre of chamber volume under the counted area."""
     if pixel_um is None:
         return None
-    volume = (side_px * pixel_um) ** 2 * depth_um / CUBIC_MICRON_PER_MICROLITRE
+    volume = area_px * (pixel_um ** 2) * depth_um / CUBIC_MICRON_PER_MICROLITRE
     return count / volume
+
+
+def concentration_per_ul(count, side_px, pixel_um, depth_um):
+    """Cells per microlitre of chamber volume under the counted square."""
+    return concentration_from_area_per_ul(count, side_px ** 2, pixel_um, depth_um)
 
 
 def points_to_raw(points, affine):
