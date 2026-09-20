@@ -44,7 +44,6 @@ class CellParams:
     workers: int = None
     sample_type: str = None
     wbc_margin_px: int = 40
-    dark_cells: bool = False
 
 
 @dataclass
@@ -235,8 +234,6 @@ def count_cells(grid, params=None, log=util.silent, watch=None):
     watch.lap("subtract grid ridges")
 
     response = detector.cell_response(flat, params.cell_sigma, params.background_sigma, workers)
-    if params.dark_cells:
-        response = -response
     noise = detector.noise_level(response, mask)
     threshold = params.threshold_sigma * noise
     points = detector.detect_cells(response, mask, threshold, params.split_sigma * noise, workers)

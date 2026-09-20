@@ -57,9 +57,6 @@ def parse_args():
         "--wbc-margin-px", type=int, default=40,
         help="pixels trimmed off every edge of the square before a wbc count",
     )
-    cell.add_argument(
-        "--dark-cells", action="store_true", help="cells are darker than the background, not brighter",
-    )
     return parser.parse_args()
 
 
@@ -75,7 +72,7 @@ def params_from_args(args):
         shape_score=args.shape_score, template_radius=args.template_radius,
         line_halfwidth=args.line_halfwidth, line_window=args.line_window,
         strip_lines=not args.keep_lines, depth_um=args.depth_um, workers=args.workers,
-        sample_type=args.sample_type, wbc_margin_px=args.wbc_margin_px, dark_cells=args.dark_cells,
+        sample_type=args.sample_type, wbc_margin_px=args.wbc_margin_px,
     )
     return grid, cells
 

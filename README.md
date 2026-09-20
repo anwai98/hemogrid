@@ -50,5 +50,7 @@ A run takes about 5 seconds for an image of 1.25 megapixels on 8 processor cores
 | `--depth-um 100` | Set the depth of the chamber. The program needs it for the concentration. |
 | `--angle -3.5` | Use this rotation instead of a search. The search takes most of the time. |
 | `--workers 1` | Use one thread. The default is one thread for each processor core. |
+| `--sample-type wbc` | Report one total for the whole square instead of a table per square. |
+| `--sample-type rbc` | Report only the four corner squares and the center square, plus their average. |
 
 To see every option, run `hemogrid --help`.
